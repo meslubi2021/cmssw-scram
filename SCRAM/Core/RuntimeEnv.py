@@ -40,9 +40,10 @@ class RuntimeEnv(object):
         self._read_ignore_env()
         return
 
-    def runtimebuildenv(self):
+    def runtimebuildenv(self, runtime_build_type=True):
         save_env = {}
-        environ["SCRAM_RUNTIME_TYPE"]="BUILD"
+        if runtime_build_type:
+            environ["SCRAM_RUNTIME_TYPE"]="BUILD"
         for k in ['LD_PRELOAD']:
             if k in environ:
                 save_env[k] = environ[k]
@@ -304,11 +305,14 @@ class RuntimeEnv(object):
                     self.env['rtstring']['path'][e].insert(0, override)
         if 'SCRAM_IGNORE_RUNTIME_HOOK' not in self.OENV:
             self._runtime_hooks()
-        if 'SCRAM_IGNORE_SITE_RUNTIME_HOOK' not in self.OENV:
-            self._runtime_hooks(SCRAM.get_site_hooks())
+            if 'SCRAM_IGNORE_SITE_RUNTIME_HOOK' not in self.OENV:
+                ignore_hooks_file = join(self.area.config(), 'SCRAM', 'hooks', 'ignore-site-hooks')
+                if not exists(ignore_hooks_file):
+                    ignore_hooks_file = ""
+                self._runtime_hooks(hook_dir=SCRAM.get_site_hooks(), ignore_hooks_file=ignore_hooks_file)
         return
 
-    def _runtime_hooks(self, hook_dir=None):
+    def _runtime_hooks(self, hook_dir=None, ignore_hooks_file=""):
         if not hook_dir: hook_dir = self.area.config()
         debug='SCRAM_HOOKS_DEBUG' in self.OENV
         hook = join(hook_dir, 'SCRAM', 'hooks', 'runtime-hook')
@@ -321,11 +325,12 @@ class RuntimeEnv(object):
         regexp = re.compile(
             '^runtime:((path:(append|prepend|remove|replace):[a-zA-Z0-9-_]+)|(variable:[a-zA-Z0-9-_]+))=(.*)$',
             re.I)
-        err, out = SCRAM.run_command('SCRAMRT_SET=true %s 2>&1' % hook)
+        err, out = SCRAM.run_command('SCRAM_IGNORE_HOOKS=%s SCRAMRT_SET=true %s 2>&1' % (ignore_hooks_file, hook))
         if debug:
           SCRAM.printerror("SCRAM_HOOK:\n%s" % out)
         for line in out.split('\n'):
             if not regexp.match(line):
+                if line.strip(): SCRAM.printerror(line)
                 continue
             vals = line.split('=', 1)
             items = vals[0].split(':')
@@ -365,7 +370,14 @@ class RuntimeEnv(object):
             elif vtype == 'variable':
                 if 'variables' not in self.env['rtstring']:
                     self.env['rtstring']['variables'] = []
-                self.env['rtstring']['variables'].append({items[2]: [vals[1]]})
+                found = False
+                for i, val in enumerate(self.env['rtstring']['variables']):
+                    if items[2] in val:
+                        val[items[2]] = [vals[1]]
+                        found = True
+                        break
+                if not found:
+                    self.env['rtstring']['variables'].append({items[2]: [vals[1]]})
         return
 
     def _runtime(self):
